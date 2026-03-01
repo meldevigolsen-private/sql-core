@@ -27,12 +27,24 @@ Window functions:
   column to the inner SELECT, and applies the condition on the outer query.
   Multiple .where_window() calls are combined into a single subquery level
   with AND logic.
+
+CTE usage:
+  Pass a CTE object directly to Query() to register it and select from it
+  in one step:
+
+      my_cte = CTE("active_users", Query(Users).select("*").where("active = true"))
+      Query(my_cte).select("*").build()
+      # equivalent to: Query("active_users").with_cte(my_cte).select("*").build()
 """
 
-from typing import Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal, Union
+
+if TYPE_CHECKING:
+    pass
 
 JOIN_TYPE = Literal["LEFT", "LEFT OUTER", "INNER", "CROSS"]
-TableRef = type["BaseTable"] | str
 
 
 # ---------------------------------------------------------------------------
@@ -54,12 +66,12 @@ class TableMeta(type):
             id = "tx_id"
             amount = "tx_amount"
 
-        f"{Transactions}"      # → "myschema.transactions"
-        Transactions.amount    # → "tx_amount"
+        f"{Transactions}"      # -> "myschema.transactions"
+        Transactions.amount    # -> "tx_amount"
     """
 
     def __str__(cls) -> str:
-        name = cls.__name__.lower()
+        name = cls.__name__
         schema = getattr(cls, "__schema__", None)
         return f"{schema}.{name}" if schema else name
 
@@ -99,18 +111,18 @@ class WindowFunction:
     rather than instantiating directly.
 
     Chaining:
-        .partition_by(*cols)  — PARTITION BY clause (optional)
-        .order_by(*cols)      — ORDER BY clause (required for ROW_NUMBER,
+        .partition_by(*cols)  - PARTITION BY clause (optional)
+        .order_by(*cols)      - ORDER BY clause (required for ROW_NUMBER,
                                 RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE,
                                 LAST_VALUE; optional for aggregates)
-        .alias(name)          — AS alias (required when used in where_window)
+        .alias(name)          - AS alias (required when used in where_window)
 
     Example:
         row_number().partition_by(Transactions.account_id).order_by(Transactions.date).alias("rn")
-        # → "ROW_NUMBER() OVER (PARTITION BY acc_id ORDER BY tx_date) AS rn"
+        # -> "ROW_NUMBER() OVER (PARTITION BY acc_id ORDER BY tx_date) AS rn"
 
         lag(Transactions.amount, 1).partition_by(Transactions.account_id).order_by(Transactions.date)
-        # → "LAG(tx_amount, 1) OVER (PARTITION BY acc_id ORDER BY tx_date)"
+        # -> "LAG(tx_amount, 1) OVER (PARTITION BY acc_id ORDER BY tx_date)"
     """
 
     def __init__(self, func: str) -> None:
@@ -119,19 +131,19 @@ class WindowFunction:
         self._order_by: list[str] = []
         self._alias: str | None = None
 
-    def partition_by(self, *columns: str) -> "WindowFunction":
+    def partition_by(self, *columns: str) -> WindowFunction:
         if not columns:
             raise ValueError("partition_by requires at least one column")
         self._partition_by.extend(columns)
         return self
 
-    def order_by(self, *columns: str) -> "WindowFunction":
+    def order_by(self, *columns: str) -> WindowFunction:
         if not columns:
             raise ValueError("order_by requires at least one column")
         self._order_by.extend(columns)
         return self
 
-    def alias(self, name: str) -> "WindowFunction":
+    def alias(self, name: str) -> WindowFunction:
         if not name:
             raise ValueError("Alias cannot be empty")
         self._alias = name
@@ -155,22 +167,22 @@ class WindowFunction:
 
 
 def row_number() -> WindowFunction:
-    """ROW_NUMBER() — unique sequential integer per partition."""
+    """ROW_NUMBER() - unique sequential integer per partition."""
     return WindowFunction("ROW_NUMBER()")
 
 
 def rank() -> WindowFunction:
-    """RANK() — rank with gaps for ties."""
+    """RANK() - rank with gaps for ties."""
     return WindowFunction("RANK()")
 
 
 def dense_rank() -> WindowFunction:
-    """DENSE_RANK() — rank without gaps for ties."""
+    """DENSE_RANK() - rank without gaps for ties."""
     return WindowFunction("DENSE_RANK()")
 
 
 def lag(column: str, offset: int = 1, default: str | None = None) -> WindowFunction:
-    """LAG(column, offset, default) — value from a preceding row."""
+    """LAG(column, offset, default) - value from a preceding row."""
     args = [column, str(offset)]
     if default is not None:
         args.append(default)
@@ -178,7 +190,7 @@ def lag(column: str, offset: int = 1, default: str | None = None) -> WindowFunct
 
 
 def lead(column: str, offset: int = 1, default: str | None = None) -> WindowFunction:
-    """LEAD(column, offset, default) — value from a following row."""
+    """LEAD(column, offset, default) - value from a following row."""
     args = [column, str(offset)]
     if default is not None:
         args.append(default)
@@ -186,12 +198,12 @@ def lead(column: str, offset: int = 1, default: str | None = None) -> WindowFunc
 
 
 def first_value(column: str) -> WindowFunction:
-    """FIRST_VALUE(column) — first value in the window frame."""
+    """FIRST_VALUE(column) - first value in the window frame."""
     return WindowFunction(f"FIRST_VALUE({column})")
 
 
 def last_value(column: str) -> WindowFunction:
-    """LAST_VALUE(column) — last value in the window frame."""
+    """LAST_VALUE(column) - last value in the window frame."""
     return WindowFunction(f"LAST_VALUE({column})")
 
 
@@ -221,38 +233,6 @@ def max_over(column: str) -> WindowFunction:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_SUBQUERY_ALIAS = "_w"
-
-
-def _resolve_table(table: TableRef) -> str:
-    """Resolve a TableRef (BaseTable subclass or plain string) to a SQL table name."""
-    return str(table) if isinstance(table, type) else table
-
-
-def join(join_type: JOIN_TYPE, table: TableRef, condition: str) -> str:
-    """
-    Build a JOIN clause string.
-
-    Args:
-        join_type: One of the supported Netezza join types.
-        table: A BaseTable subclass or a plain string table name.
-        condition: The ON condition.
-
-    Note: CROSS JOIN does not use an ON condition in Netezza, but passing
-    one here will not cause a syntax error — Netezza will raise at query time.
-    """
-    resolved = _resolve_table(table)
-    if not resolved:
-        raise ValueError("Table name cannot be empty")
-    if not condition:
-        raise ValueError("Join condition cannot be empty")
-    return f"{join_type} JOIN {resolved} ON {condition}"
-
-
-# ---------------------------------------------------------------------------
 # CTE
 # ---------------------------------------------------------------------------
 
@@ -262,8 +242,18 @@ class CTE:
     Represents a reusable Common Table Expression (WITH clause).
 
     Defined once from a Query object and can be passed to any number of
-    Query instances via .with_cte(). The same CTE instance can be shared
-    across multiple queries without redefining it.
+    Query instances. Can be used in two ways:
+
+    1. Pass directly to Query() — registers the CTE and selects from it
+       in one step (preferred):
+
+           my_cte = CTE("active_users", Query(Users).select("*").where("active = true"))
+           Query(my_cte).select("*").build()
+
+    2. Register manually via .with_cte() — useful when the CTE is not the
+       primary table but is referenced in joins or conditions:
+
+           Query(Orders).with_cte(my_cte).select("*").join("INNER", my_cte, ...).build()
 
     For filtering on window function results, prefer .where_window() on
     the Query directly — it handles the subquery wrapping automatically.
@@ -271,7 +261,7 @@ class CTE:
     in multiple subsequent queries.
     """
 
-    def __init__(self, name: str, query: "Query") -> None:
+    def __init__(self, name: str, query: Query) -> None:
         if not name:
             raise ValueError("CTE name cannot be empty")
         if not isinstance(query, Query):
@@ -290,6 +280,45 @@ class CTE:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_SUBQUERY_ALIAS = "_w"
+
+# A table reference can be a BaseTable subclass, a CTE object, or a plain string.
+TableRef = Union[type[BaseTable], CTE, str]
+
+
+def _resolve_table(table: TableRef) -> str:
+    """Resolve a TableRef to a SQL table name string."""
+    if isinstance(table, type):
+        return str(table)  # BaseTable subclass via TableMeta.__str__
+    if isinstance(table, CTE):
+        return table.name
+    return table
+
+
+def join(join_type: JOIN_TYPE, table: TableRef, condition: str) -> str:
+    """
+    Build a JOIN clause string.
+
+    Args:
+        join_type: One of the supported Netezza join types.
+        table: A BaseTable subclass, CTE object, or plain string table name.
+        condition: The ON condition.
+
+    Note: CROSS JOIN does not use an ON condition in Netezza, but passing
+    one here will not cause a syntax error - Netezza will raise at query time.
+    """
+    resolved = _resolve_table(table)
+    if not resolved:
+        raise ValueError("Table name cannot be empty")
+    if not condition:
+        raise ValueError("Join condition cannot be empty")
+    return f"{join_type} JOIN {resolved} ON {condition}"
+
+
+# ---------------------------------------------------------------------------
 # Query builder
 # ---------------------------------------------------------------------------
 
@@ -298,59 +327,45 @@ class Query:
     """
     Fluent query builder for Netezza SQL.
 
-    Accepts BaseTable subclasses or plain strings as table references.
-    Column attributes from BaseTable subclasses are plain strings and work
-    naturally with all builder methods. WindowFunction expressions can be
-    passed directly to .select().
+    Accepts BaseTable subclasses, CTE objects, or plain strings as table
+    references throughout (Query(), .join()). Column attributes from
+    BaseTable subclasses are plain strings and work naturally with all
+    builder methods. WindowFunction expressions can be passed to .select().
 
-    To filter on a window function result use .where_window() — it
+    Passing a CTE to Query() registers it automatically:
+
+        active_users = CTE("active_users", Query(Users).select("*").where("active = true"))
+
+        # These are equivalent:
+        Query(active_users).select("*").build()
+        Query("active_users").with_cte(active_users).select("*").build()
+
+    To filter on a window function result use .where_window() - it
     automatically wraps the query in a subquery so the condition can be
     applied legally. Multiple .where_window() calls are combined into a
     single subquery level and AND-ed together.
-
-    Example:
-        # Filtering on a window function — subquery generated automatically
-        query = (
-            Query(Transactions)
-            .select(Transactions.id, Transactions.amount)
-            .where_window(
-                row_number()
-                    .partition_by(Transactions.account_id)
-                    .order_by(f"{Transactions.date} DESC")
-                    .alias("rn"),
-                "rn = 1",
-            )
-            .build()
-        )
-
-        # Window function in SELECT only, no filtering needed
-        query = (
-            Query(Transactions)
-            .select(
-                Transactions.id,
-                Transactions.amount,
-                rank()
-                    .partition_by(Transactions.account_id)
-                    .order_by(f"{Transactions.amount} DESC")
-                    .alias("rnk"),
-            )
-            .build()
-        )
     """
 
     def __init__(self, table: TableRef) -> None:
         """
         Args:
-            table: A BaseTable subclass or a plain string. BaseTable subclasses
-                   automatically resolve to their schema-qualified name.
-                   Pass a plain string when selecting from a CTE by name.
+            table: A BaseTable subclass, a CTE object, or a plain string.
+                   - BaseTable subclasses resolve to their schema-qualified name.
+                   - CTE objects register themselves automatically and use their
+                     name as the table reference, so Query(my_cte) is equivalent
+                     to Query("my_cte").with_cte(my_cte).
+                   - Plain strings are used as-is (e.g. for literal table names).
         """
-        resolved = _resolve_table(table)
-        if not resolved:
-            raise ValueError("Table name cannot be empty")
-        self._table = resolved
+        if isinstance(table, CTE):
+            self._table = table.name
+            self._ctes: list[CTE] = [table]
+        else:
+            resolved = _resolve_table(table)
+            if not resolved:
+                raise ValueError("Table name cannot be empty")
+            self._table = resolved
+            self._ctes = []
 
-        self._ctes: list[CTE] = []
         self._columns: list[str] = []
         self._distinct: bool = False
         self._where: str | None = None
@@ -364,12 +379,17 @@ class Query:
         # Each entry is (WindowFunction, condition_string)
         self._window_conditions: list[tuple[WindowFunction, str]] = []
 
-    def with_cte(self, *ctes: CTE) -> "Query":
+    def with_cte(self, *ctes: CTE) -> Query:
         """
         Add one or more CTEs to the query.
 
         CTEs are rendered in the order they are added. If a CTE references
         another CTE, the referenced CTE must be added first.
+
+        Note: if you are selecting directly from a CTE, prefer passing it
+        to Query() instead of using .with_cte() — it's more concise.
+        Use .with_cte() when the CTE is referenced in joins or conditions
+        rather than as the primary FROM table.
         """
         names = [c.name for c in self._ctes]
         for cte in ctes:
@@ -379,7 +399,7 @@ class Query:
             names.append(cte.name)
         return self
 
-    def select(self, *columns: str | WindowFunction) -> "Query":
+    def select(self, *columns: str | WindowFunction) -> Query:
         """
         Args:
             *columns: Column names (strings), BaseTable column attributes,
@@ -390,17 +410,17 @@ class Query:
         self._columns.extend(str(c) for c in columns)
         return self
 
-    def distinct(self) -> "Query":
+    def distinct(self) -> Query:
         self._distinct = True
         return self
 
-    def where(self, condition: str) -> "Query":
+    def where(self, condition: str) -> Query:
         if not condition:
             raise ValueError("WHERE condition cannot be empty")
         self._where = condition
         return self
 
-    def where_window(self, window_func: WindowFunction, condition: str) -> "Query":
+    def where_window(self, window_func: WindowFunction, condition: str) -> Query:
         """
         Filter on a window function result.
 
@@ -440,23 +460,23 @@ class Query:
         self._window_conditions.append((window_func, condition))
         return self
 
-    def join(self, join_type: JOIN_TYPE, table: TableRef, condition: str) -> "Query":
+    def join(self, join_type: JOIN_TYPE, table: TableRef, condition: str) -> Query:
         """
         Args:
             join_type: One of the supported Netezza join types.
-            table: A BaseTable subclass or a plain string (including CTE names).
+            table: A BaseTable subclass, CTE object, or plain string.
             condition: The ON condition.
         """
         self._joins.append(join(join_type, table, condition))
         return self
 
-    def group_by(self, *columns: str) -> "Query":
+    def group_by(self, *columns: str) -> Query:
         if not columns:
             raise ValueError("Must provide at least one column to GROUP BY")
         self._group_by.extend(columns)
         return self
 
-    def having(self, condition: str) -> "Query":
+    def having(self, condition: str) -> Query:
         if not condition:
             raise ValueError("HAVING condition cannot be empty")
         if not self._group_by:
@@ -464,37 +484,32 @@ class Query:
         self._having = condition
         return self
 
-    def order_by(self, *columns: str) -> "Query":
+    def order_by(self, *columns: str) -> Query:
         if not columns:
             raise ValueError("Must provide at least one column to ORDER BY")
         self._order_by.extend(columns)
         return self
 
-    def limit(self, limit: int) -> "Query":
+    def limit(self, limit: int) -> Query:
         if limit < 0:
             raise ValueError(f"LIMIT must be a non-negative integer, got {limit}")
         self._limit = limit
         return self
 
-    def offset(self, offset: int) -> "Query":
+    def offset(self, offset: int) -> Query:
         if offset < 0:
             raise ValueError(f"OFFSET must be a non-negative integer, got {offset}")
         self._offset = offset
         return self
 
     def _build_inner(self) -> str:
-        """Build the raw SELECT...FROM...JOIN...WHERE...GROUP BY...HAVING string
-        without window-condition wrapping, CTEs, ORDER BY, LIMIT, or OFFSET.
-        Used internally to construct the inner subquery when where_window is used."""
+        """Build the inner SELECT used when where_window wraps the query in a subquery.
+        Includes all selected columns plus any window function columns needed for filtering."""
         distinct = "DISTINCT " if self._distinct else ""
-
-        # Inner query includes all selected columns + window function columns
-        inner_cols = list(self._columns)
-        for wf, _ in self._window_conditions:
-            inner_cols.append(str(wf))
-
+        inner_cols = list(self._columns) + [
+            str(wf) for wf, _ in self._window_conditions
+        ]
         query = f"SELECT {distinct}{', '.join(inner_cols)} FROM {self._table}"
-
         if self._joins:
             query += f" {' '.join(self._joins)}"
         if self._where is not None:
@@ -503,7 +518,6 @@ class Query:
             query += f" GROUP BY {', '.join(self._group_by)}"
         if self._having is not None:
             query += f" HAVING {self._having}"
-
         return query
 
     def build(self) -> str:
@@ -516,11 +530,8 @@ class Query:
             cte_prefix = f"WITH {cte_clauses} "
 
         if self._window_conditions:
-            # Wrap the inner query as a subquery; apply window conditions in outer WHERE
             inner_sql = self._build_inner()
             outer_where = " AND ".join(cond for _, cond in self._window_conditions)
-
-            # Outer SELECT only exposes the originally requested columns
             query = (
                 f"{cte_prefix}"
                 f"SELECT {', '.join(self._columns)} "
@@ -530,7 +541,6 @@ class Query:
         else:
             distinct = "DISTINCT " if self._distinct else ""
             query = f"{cte_prefix}SELECT {distinct}{', '.join(self._columns)} FROM {self._table}"
-
             if self._joins:
                 query += f" {' '.join(self._joins)}"
             if self._where is not None:
@@ -569,83 +579,34 @@ if __name__ == "__main__":
         id = "acc_id"
         balance = "current_balance"
 
-    # Example 1: latest transaction per account using where_window
-    # — subquery wrapper is generated automatically
-    query1 = (
-        Query(Transactions)
-        .select(Transactions.id, Transactions.account_id, Transactions.amount)
-        .where(f"{Transactions.status} = 'active'")
-        .where_window(
-            row_number()
-            .partition_by(Transactions.account_id)
-            .order_by(f"{Transactions.date} DESC")
-            .alias("rn"),
-            "rn = 1",
-        )
-        .order_by(Transactions.account_id)
-        .build()
-    )
-    print("Example 1 (where_window — latest transaction per account):")
-    print(query1)
-    print()
-
-    # Example 2: multiple where_window conditions combined into one subquery
-    query2 = (
-        Query(Transactions)
-        .select(Transactions.id, Transactions.account_id, Transactions.amount)
-        .where_window(
-            row_number()
-            .partition_by(Transactions.account_id)
-            .order_by(f"{Transactions.date} DESC")
-            .alias("rn"),
-            "rn <= 3",
-        )
-        .where_window(
-            sum_over(Transactions.amount)
-            .partition_by(Transactions.account_id)
-            .order_by(Transactions.date)
-            .alias("running_total"),
-            "running_total < 10000",
-        )
-        .build()
-    )
-    print("Example 2 (multiple where_window conditions — single subquery, AND-ed):")
-    print(query2)
-    print()
-
-    # Example 3: window function in SELECT only, no filtering
-    query3 = (
-        Query(Transactions)
-        .select(
-            Transactions.id,
-            Transactions.amount,
-            lag(Transactions.amount, 1, "0")
-            .partition_by(Transactions.account_id)
-            .order_by(Transactions.date)
-            .alias("prev_amount"),
-            sum_over(Transactions.amount)
-            .partition_by(Transactions.account_id)
-            .order_by(Transactions.date)
-            .alias("running_total"),
-        )
-        .build()
-    )
-    print("Example 3 (window functions in SELECT only):")
-    print(query3)
-    print()
-
-    # Example 4: where_window combined with a CTE
+    # Example 1: Query(cte) — CTE registered and selected from in one step
     active_accounts = CTE(
         "active_accounts",
         Query(Accounts)
         .select(Accounts.id, Accounts.balance)
         .where(f"{Accounts.balance} > 0"),
     )
-    query4 = (
+    query1 = (
+        Query(active_accounts)  # no .with_cte() needed
+        .select(Accounts.id, Accounts.balance)
+        .where(f"{Accounts.balance} > 500")
+        .order_by(Accounts.balance)
+        .build()
+    )
+    print("Example 1 (Query(cte) — automatic registration):")
+    print(query1)
+    print()
+
+    # Example 2: Query(cte) + where_window
+    windowed_txns = CTE(
+        "windowed_txns",
         Query(Transactions)
-        .with_cte(active_accounts)
         .select(Transactions.id, Transactions.account_id, Transactions.amount)
-        .join("INNER", "active_accounts", f"{Transactions.account_id} = {Accounts.id}")
+        .where(f"{Transactions.status} = 'active'"),
+    )
+    query2 = (
+        Query(windowed_txns)
+        .select(Transactions.id, Transactions.account_id, Transactions.amount)
         .where_window(
             dense_rank()
             .partition_by(Transactions.account_id)
@@ -655,5 +616,49 @@ if __name__ == "__main__":
         )
         .build()
     )
-    print("Example 4 (where_window + CTE):")
+    print("Example 2 (Query(cte) + where_window):")
+    print(query2)
+    print()
+
+    # Example 3: .with_cte() still works for CTEs used in joins rather than FROM
+    accounts_cte = CTE(
+        "accounts_cte",
+        Query(Accounts)
+        .select(Accounts.id, Accounts.balance)
+        .where(f"{Accounts.balance} > 0"),
+    )
+    query3 = (
+        Query(Transactions)
+        .with_cte(accounts_cte)  # CTE joined, not the primary table
+        .select(Transactions.id, Transactions.amount, Accounts.balance)
+        .join("INNER", accounts_cte, f"{Transactions.account_id} = {Accounts.id}")
+        .where(f"{Transactions.status} = 'active'")
+        .build()
+    )
+    print("Example 3 (.with_cte() for a joined CTE):")
+    print(query3)
+    print()
+
+    # Example 4: window functions in SELECT only, no filtering
+    query4 = (
+        Query(Transactions)
+        .select(
+            Transactions.id,
+            Transactions.amount,
+            row_number()
+            .partition_by(Transactions.account_id)
+            .order_by(f"{Transactions.date} DESC")
+            .alias("rn"),
+            sum_over(Transactions.amount)
+            .partition_by(Transactions.account_id)
+            .order_by(Transactions.date)
+            .alias("running_total"),
+            lag(Transactions.amount, 1, "0")
+            .partition_by(Transactions.account_id)
+            .order_by(Transactions.date)
+            .alias("prev_amount"),
+        )
+        .build()
+    )
+    print("Example 4 (window functions in SELECT only):")
     print(query4)
