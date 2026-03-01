@@ -48,7 +48,10 @@
     },
 
     // Python Environment Settings
-    "python.terminal.activateEnvironment": true
+    "python.terminal.activateEnvironment": true,
+    "python.analysis.inlayHints.functionReturnTypes": true,
+    "python.analysis.inlayHints.variableTypes": true,
+    "python.analysis.inlayHints.callArgumentNames": "partial"
   },
   "tasks": {
     "version": "2.0.0",
