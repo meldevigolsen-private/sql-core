@@ -15,37 +15,77 @@
         "**/.mypy_cache": true,
         "**/.venv": true
     },
-    // --- Pylance & Type Checking Settings ---
-    // Enforces type checking based on your .pyi stubs
-    "python.analysis.typeCheckingMode": "basic",
-    // Tells Pylance where to find your metadata stubs
-    "python.analysis.stubPath": "typings", 
-    // Turns on inlay hints (crucial for functional chaining to see return types)
-    "python.analysis.inlayHints.functionReturnTypes": true,
-    "python.analysis.inlayHints.variableTypes": true,
-    
-    // --- Formatting & Linting (Ruff) ---
-    "editor.formatOnSave": true,
+    // Python-specific Editor Settings
     "[python]": {
       "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.formatOnSave": true,
       "editor.codeActionsOnSave": {
-        "source.fixAll.ruff": "explicit",
-        "source.organizeImports.ruff": "explicit"
+        "source.fixAll": "explicit",
+        "source.organizeImports": "explicit"
       }
     },
 
-    // --- Editor Quality of Life ---
-    // Helps keep nested parentheses readable in complex WHERE clauses
-    "editor.bracketPairColorization.enabled": true,
-    "editor.guides.bracketPairs": "active"
+    // Type Checking Configuration (Mypy & Pylance)
+    "python.analysis.typeCheckingMode": "standard",
+    "mypy-type-checker.args": [
+      "--ignore-missing-imports"
+    ],
+
+    // Jupyter Notebook Settings
+    "jupyter.askForKernelRestart": false,
+    "notebook.formatOnSave.enabled": true,
+
+    // General Editor Hygiene (Great for Bank/Enterprise Environments)
+    "editor.formatOnSave": true,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.trimExtensions": true,
+
+    // File Associations
+    "files.associations": {
+      "*.sql": "sql",
+      "*.csv": "csv"
+    },
+
+    // Python Environment Settings
+    "python.terminal.activateEnvironment": true
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Python: Install Requirements",
+        "type": "shell",
+        "command": "${command:python.interpreterPath} -m pip install -r requirements.txt",
+        "problemMatcher": []
+      }
+    ]
   },
   "extensions": {
     "recommendations": [
+      // Core Python Support
       "ms-python.python",
       "ms-python.vscode-pylance",
+      "ms-toolsai.jupyter",
+
+      // Type Checking
       "ms-python.mypy-type-checker",
+
+      // Linting and Formatting
       "charliermarsh.ruff",
-      "mtxr.sqltools"
+
+      // Database Management & SQL
+      "mtxr.sqltools",
+
+      // Data Analysis Utilities
+      "mechatroner.rainbow-csv",
+      "ms-toolsai.datawrangler",
+
+      // Environment Management
+      "ms-python.vscode-python-envs",
+
+      // Version Control & Team Collaboration
+      "eamodio.gitlens"
     ]
   }
 }
