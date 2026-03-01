@@ -1,0 +1,51 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.mypy_cache": true,
+        "**/.venv": true
+    },
+    "search.exclude": {
+        "**/__pycache__": true,
+        "**/.mypy_cache": true,
+        "**/.venv": true
+    },
+    // --- Pylance & Type Checking Settings ---
+    // Enforces type checking based on your .pyi stubs
+    "python.analysis.typeCheckingMode": "basic",
+    // Tells Pylance where to find your metadata stubs
+    "python.analysis.stubPath": "typings", 
+    // Turns on inlay hints (crucial for functional chaining to see return types)
+    "python.analysis.inlayHints.functionReturnTypes": true,
+    "python.analysis.inlayHints.variableTypes": true,
+    
+    // --- Formatting & Linting (Ruff) ---
+    "editor.formatOnSave": true,
+    "[python]": {
+      "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.codeActionsOnSave": {
+        "source.fixAll.ruff": "explicit",
+        "source.organizeImports.ruff": "explicit"
+      }
+    },
+
+    // --- Editor Quality of Life ---
+    // Helps keep nested parentheses readable in complex WHERE clauses
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": "active"
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "ms-python.mypy-type-checker",
+      "charliermarsh.ruff",
+      "mtxr.sqltools"
+    ]
+  }
+}
